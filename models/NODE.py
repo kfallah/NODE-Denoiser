@@ -4,13 +4,13 @@ import torch.nn as nn
 from torchdiffeq import odeint_adjoint as odeint
 
 class NODEDenoiser(nn.Module):
-    def __init__(self, channels=1, augmented_channels=5, num_of_layers=17, features=64):
+    def __init__(self, channels=1, augmented_channels=0, num_of_layers=17, features=64):
         super(NODEDenoiser, self).__init__()
         self.augmented_channels = augmented_channels
         
         up_conv = nn.Conv2d(channels+self.augmented_channels, features, kernel_size=3, padding=1, bias=False)
         relu = nn.ReLU(inplace=True)
-        ode = ODEBlock(ODEDenoiseFunc(features), num_of_layers)
+        ode = ODEBlock(ODEDenoiseFunc(features))
         down_conv = nn.Conv2d(features, channels, kernel_size=3, padding=1, bias=False)
         
         self._layers = nn.Sequential(up_conv, relu, ode, down_conv)
@@ -24,13 +24,13 @@ class NODEDenoiser(nn.Module):
 
 class ODEBlock(nn.Module):
 
-    def __init__(self, odefunc, num_of_layers):
+    def __init__(self, odefunc):
         super(ODEBlock, self).__init__()
         self.odefunc = odefunc
-        self.integration_time = torch.linspace(0, 1, num_of_layers-2).float()
+        self.integration_time = torch.tensor([0, 1]).float()
 
     def forward(self, x):
-        self.integration_time = self.integration_time.type_as(x)
+        self.integration_time = self.integration_time.to(x.device).type_as(x)
         out = odeint(self.odefunc, x, self.integration_time)
         return out[-1]
 
@@ -56,13 +56,39 @@ class ConcatConv2d(nn.Module):
         tt = torch.ones_like(x[:, :1, :, :]) * t
         ttx = torch.cat([tt, x], 1)
         return self._layer(ttx)
+
+def norm(dim):
+    return nn.GroupNorm(min(32, dim), dim)
+    
+class ODEfunc(nn.Module):
+
+    def __init__(self, dim=64):
+        super(ODEfunc, self).__init__()
+        self.norm1 = norm(dim)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv1 = ConcatConv2d(dim, dim, 3, 1, 1)
+        self.norm2 = norm(dim)
+        self.conv2 = ConcatConv2d(dim, dim, 3, 1, 1)
+        self.norm3 = norm(dim)
+        self.nfe = 0
+
+    def forward(self, t, x):
+        self.nfe += 1
+        out = self.norm1(x)
+        out = self.relu(out)
+        out = self.conv1(t, out)
+        out = self.norm2(out)
+        out = self.relu(out)
+        out = self.conv2(t, out)
+        out = self.norm3(out)
+        return out        
         
 class ODEDenoiseFunc(nn.Module):
 
     def __init__(self, features=64):
         super(ODEDenoiseFunc, self).__init__()
         self.conv1 = ConcatConv2d(dim_in=features, dim_out=features, padding=1, bias=False)
-        self.norm = nn.InstanceNorm2d(features)
+        self.norm = norm(features)
         self.nonlin = nn.ReLU(inplace=True)
         self.nfe = 0
 
