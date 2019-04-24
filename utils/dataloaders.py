@@ -76,17 +76,19 @@ class ImageDataset(data.Dataset):
         'Initialization'
         super(ImageDataset, self).__init__()
         self.images = images
-        self.images = torch.Tensor(self.images)
         self.augment = augment
 
     def __len__(self):
         'Denotes the total number of samples'
-        return self.images.shape[0]
+        if isinstance(self.images,np.ndarray):
+            return self.images.shape[0]
+        else:
+            return len(self.images)
 
     def __getitem__(self, index):
         'Generates one sample of data'
         # Select sample
-        image = self.images[index, :]
+        image = torch.Tensor(self.images[index])
     
         if self.augment:
             data_augmentation(image)

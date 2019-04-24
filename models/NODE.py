@@ -3,36 +3,23 @@ import torch.nn as nn
 
 from torchdiffeq import odeint_adjoint as odeint
 
-class NODEDenoiser(nn.Module):
-    def __init__(self, channels=1, augmented_channels=0, num_of_layers=17, features=64):
-        super(NODEDenoiser, self).__init__()
-        self.augmented_channels = augmented_channels
-        
-        up_conv = nn.Conv2d(channels+self.augmented_channels, features, kernel_size=3, padding=1, bias=False)
-        relu = nn.ReLU(inplace=True)
-        ode = ODEBlock(ODEDenoiseFunc(features))
-        down_conv = nn.Conv2d(features, channels, kernel_size=3, padding=1, bias=False)
-        
-        self._layers = nn.Sequential(up_conv, relu, ode, down_conv)
-        
-    def forward(self, x):
-        aug_size = list(x.shape)
-        aug_size[1] = self.augmented_channels
-        aug_channels = torch.zeros(*aug_size, dtype=x.dtype, layout=x.layout, device=x.device)
-        x_aug = torch.cat([x, aug_channels], 1)
-        return self._layers(x_aug)
-
 class ODEBlock(nn.Module):
 
-    def __init__(self, odefunc):
+    def __init__(self, odefunc, rtol, atol):
         super(ODEBlock, self).__init__()
         self.odefunc = odefunc
+        self.rtol = rtol
+        self.atol = atol
         self.integration_time = torch.tensor([0, 1]).float()
 
     def forward(self, x):
         self.integration_time = self.integration_time.to(x.device).type_as(x)
-        out = odeint(self.odefunc, x, self.integration_time)
+        out = odeint(self.odefunc, x, self.integration_time, rtol=self.rtol, atol=self.atol)
         return out[-1]
+    
+    def set_tolerance(self, rtol, atol):
+        self.rtol = rtol
+        self.atol = atol
 
     @property
     def nfe(self):
@@ -98,3 +85,29 @@ class ODEDenoiseFunc(nn.Module):
         out = self.norm(out)
         out = self.nonlin(out)
         return out
+
+class NODEDenoiser(nn.Module):
+    def __init__(self, channels=1, func=ODEDenoiseFunc, augmented_channels=0, features=64, rtol=1e-6, atol=1e-12):
+        super(NODEDenoiser, self).__init__()
+        self.augmented_channels = augmented_channels
+        
+        up_conv = nn.Conv2d(channels+self.augmented_channels, features, kernel_size=3, padding=1, bias=False)
+        relu = nn.ReLU(inplace=True)
+        self.ode = ODEBlock(func(features), rtol=rtol, atol=atol)
+        down_conv = nn.Conv2d(features, channels, kernel_size=3, padding=1, bias=False)
+        
+        self._layers = nn.Sequential(up_conv, relu, self.ode, down_conv)
+        
+    def forward(self, x):
+        y = x
+        
+        aug_size = list(x.shape)
+        aug_size[1] = self.augmented_channels
+        aug_channels = torch.zeros(*aug_size, dtype=x.dtype, layout=x.layout, device=x.device)
+        x_aug = torch.cat([x, aug_channels], 1)
+        out = self._layers(x_aug)
+        
+        return y-out
+    
+    def set_tolerance(self, rtol, atol):
+        self.ode.set_tolerance(rtol, atol)
