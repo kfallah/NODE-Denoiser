@@ -86,6 +86,52 @@ class ODEDenoiseFunc(nn.Module):
         out = self.nonlin(out)
         return out
 
+class TODEDenoiseFunc(nn.Module):
+    def __init__(self, channels=1, augmented_channels=0, features=64):
+        super(TNODEDenoiseFunc, self).__init__()
+        self.augmented_channels = augmented_channels
+        
+        conv1 = ConcatConv2d(channels+augmented_channels, features, padding=1, bias=False)
+        relu = nn.ReLU(inplace=True)
+        conv2 = ConcatConv2d(dim_in=features, dim_out=features, padding=1, bias=False)
+        layer_norm = norm(features)
+        nonlin = nn.ReLU(inplace=True)
+        down_conv = ConcatConv2d(features, channels, padding=1, bias=False)
+        self._layers = nn.Sequential(conv1, relu, conv2, layer_norm, nonlin, down_conv)
+        self.nfe = 0
+
+    def forward(self, t, x):
+        aug_size = list(x.shape)
+        aug_size[1] = self.augmented_channels
+        aug_channels = torch.zeros(*aug_size, dtype=x.dtype, layout=x.layout, device=x.device)
+        x_aug = torch.cat([x, aug_channels], 1)
+        
+        self.nfe += 1
+        for module in self._layers:
+            if isinstance(module, ConcatConv2d):
+                x_aug = module(t, x_aug)
+            else:
+                x_aug = module(x_aug)
+        return x_aug
+    
+class TNODEDenoiser(nn.Module):
+    def __init__(self, channels=1, func=TODEDenoiseFunc, augmented_channels=0, features=64, rtol=1e-6, atol=1e-12):
+        super(TNODEDenoiser, self).__init__()
+        self.func = func(channels=channels, augmented_channels=augmented_channels, features=features)
+        self.integration_time = torch.tensor([0, 1]).float()
+        self.rtol = rtol
+        self.atol = atol
+       
+    def forward(self, x):
+        y = x
+        self.integration_time = self.integration_time.to(x.device).type_as(x)
+        out = odeint(self.func, x, self.integration_time, rtol=self.rtol, atol=self.atol)        
+        return y-out[-1]
+    
+    def set_tolerance(self, rtol, atol):
+        self.rtol = rtol
+        self.atol = atol
+
 class NODEDenoiser(nn.Module):
     def __init__(self, channels=1, func=ODEDenoiseFunc, augmented_channels=0, features=64, rtol=1e-6, atol=1e-12):
         super(NODEDenoiser, self).__init__()

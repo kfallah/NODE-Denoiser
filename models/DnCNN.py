@@ -37,7 +37,8 @@ class BasicBlock(nn.Module):
 
     def __init__(self, features, droprate=None):
         super(BasicBlock, self).__init__()
-        self.conv = nn.Conv2d(in_channels=features, out_channels=features, kernel_size=3, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(in_channels=features, out_channels=features, kernel_size=3, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(in_channels=features, out_channels=features, kernel_size=3, padding=1, bias=False)
         self.norm = nn.BatchNorm2d(features)
         self.nonlin = nn.ReLU(inplace=True)
         self.droprate = droprate
@@ -48,9 +49,10 @@ class BasicBlock(nn.Module):
     def forward(self, x):
         residual = x
 
-        out = self.conv(x)
+        out = self.conv1(x)
         out = self.norm(out)
         out = self.nonlin(out)
+        out = self.conv2(out)
         if self.droprate is not None:
             out = self.drop(out)
 
